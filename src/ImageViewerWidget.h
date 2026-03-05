@@ -1,0 +1,45 @@
+#pragma once
+
+#include <QImage>
+#include <QPoint>
+#include <QPointF>
+#include <QWidget>
+
+class ImageViewerWidget : public QWidget {
+    Q_OBJECT
+
+public:
+    explicit ImageViewerWidget(QWidget* parent = nullptr);
+
+    void setImage(const QImage& image);
+    void rotateClockwise();
+    void rotateCounterClockwise();
+    [[nodiscard]] bool hasImage() const;
+
+protected:
+    void paintEvent(QPaintEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+
+private:
+    [[nodiscard]] bool isQuarterTurnOdd() const;
+    [[nodiscard]] QSizeF scaledImageSize() const;
+    [[nodiscard]] bool isPannable() const;
+    void fitToWindow();
+    void clampOffset();
+    void applyZoomAt(const QPointF& cursorPos, qreal zoomFactor);
+
+    QImage image_;
+    qreal scale_ = 1.0;
+    QPointF offset_;
+    int quarterTurns_ = 0;
+    bool dragging_ = false;
+    QPoint lastMousePos_;
+
+    static constexpr qreal kMinZoom = 0.1;
+    static constexpr qreal kMaxZoom = 10.0;
+    static constexpr qreal kWheelZoomStep = 1.15;
+};

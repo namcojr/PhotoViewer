@@ -1,0 +1,37 @@
+# Build directories
+/build/
+/cmake-build-*/
+/stage/
+
+# CMake generated files
+/CMakeCache.txt
+/CMakeFiles/
+/Makefile
+/cmake_install.cmake
+/compile_commands.json
+/install_manifest.txt
+
+# Binaries and objects
+*.o
+*.obj
+*.so
+*.a
+*.out
+
+# Qt generated artifacts (if produced in source tree)
+*_autogen/
+*.moc
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+
+# IDE/editor settings
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db

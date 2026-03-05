@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Photo Viewer
+Exec=@CMAKE_INSTALL_FULL_BINDIR@/photo-viewer %f
+Type=Application
+MimeType=image/jpeg;image/png;image/webp;image/bmp;image/tiff;image/gif;
+Categories=Graphics;Viewer;
+Terminal=false
