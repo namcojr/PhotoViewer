@@ -127,6 +127,25 @@ void ImageModel::setCurrentIndex(const int index) {
     currentIndex_ = index;
 }
 
+bool ImageModel::removeCurrent() {
+    if (currentIndex_ < 0 || currentIndex_ >= size()) {
+        return false;
+    }
+
+    entries_.erase(entries_.begin() + currentIndex_);
+
+    if (entries_.empty()) {
+        currentIndex_ = -1;
+        return true;
+    }
+
+    if (currentIndex_ >= size()) {
+        currentIndex_ = size() - 1;
+    }
+
+    return true;
+}
+
 std::optional<ImageModel::ImageEntry> ImageModel::makeEntry(const std::filesystem::path& path) {
     QImageReader reader(QString::fromStdString(path.string()));
     reader.setDecideFormatFromContent(true);

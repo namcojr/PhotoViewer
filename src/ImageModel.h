@@ -31,6 +31,7 @@ public:
 
     bool setCurrentByPath(const std::filesystem::path& filePath);
     void setCurrentIndex(int index);
+    bool removeCurrent();
 
 private:
     static std::optional<ImageEntry> makeEntry(const std::filesystem::path& path);

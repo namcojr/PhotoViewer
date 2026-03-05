@@ -51,10 +51,13 @@ photo-viewer /path/to/image.jpg
 
 ## Controls
 
-- `Right Arrow`: next image (wraps)
-- `Left Arrow`: previous image (wraps)
-- `Page Up`: rotate right (90°)
-- `Page Down`: rotate left (90°)
+- `Page Down`: next image (wraps)
+- `Page Up`: previous image (wraps)
+- `Home`: first image in current list
+- `End`: last image in current list
+- `Del`: move current image to trash (no confirmation)
+- `Arrow Right`: rotate right (90°)
+- `Arrow Left`: rotate left (90°)
 - `I`: show EXIF popup
 - `Ctrl+C`: copy current full-resolution image to clipboard
 - `q` / `Esc`: quit (and close EXIF dialog)

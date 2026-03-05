@@ -7,6 +7,7 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QFile>
 #include <QFileInfo>
 #include <QFuture>
 #include <QGuiApplication>
@@ -81,7 +82,9 @@ MainWindow::MainWindow(const std::filesystem::path& startFile, QWidget* parent)
 
     setCentralWidget(central);
     setWindowTitle(QStringLiteral("Photo Viewer"));
-    resize(1280, 800);
+    resize(1920, 1200);
+    setMinimumSize(960, 600);
+    setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
 
     connect(&loadWatcher_, &QFutureWatcher<LoadedImage>::finished, this, [this]() {
         loading_ = false;
@@ -138,19 +141,31 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
     }
 
     switch (event->key()) {
-    case Qt::Key_Right:
+    case Qt::Key_PageDown:
         showNextImage();
         event->accept();
         return;
-    case Qt::Key_Left:
+    case Qt::Key_PageUp:
         showPreviousImage();
         event->accept();
         return;
-    case Qt::Key_PageUp:
+    case Qt::Key_Home:
+        showFirstImage();
+        event->accept();
+        return;
+    case Qt::Key_End:
+        showLastImage();
+        event->accept();
+        return;
+    case Qt::Key_Delete:
+        moveCurrentImageToTrash();
+        event->accept();
+        return;
+    case Qt::Key_Right:
         viewer_->rotateClockwise();
         event->accept();
         return;
-    case Qt::Key_PageDown:
+    case Qt::Key_Left:
         viewer_->rotateCounterClockwise();
         event->accept();
         return;
@@ -241,6 +256,46 @@ void MainWindow::showPreviousImage() {
         return;
     }
     loadCurrentImageWithFallback(model_.wrappedPreviousIndex(), -1);
+}
+
+void MainWindow::showFirstImage() {
+    if (model_.empty()) {
+        return;
+    }
+    loadCurrentImageWithFallback(0, 1);
+}
+
+void MainWindow::showLastImage() {
+    if (model_.empty()) {
+        return;
+    }
+    loadCurrentImageWithFallback(model_.size() - 1, -1);
+}
+
+void MainWindow::moveCurrentImageToTrash() {
+    if (loading_ || model_.empty()) {
+        return;
+    }
+
+    const auto* entry = model_.current();
+    if (entry == nullptr) {
+        return;
+    }
+
+    if (!QFile::moveToTrash(QString::fromStdString(entry->path.string()))) {
+        return;
+    }
+
+    if (!model_.removeCurrent()) {
+        return;
+    }
+
+    if (model_.empty()) {
+        close();
+        return;
+    }
+
+    loadCurrentImageWithFallback(model_.currentIndex(), 1);
 }
 
 void MainWindow::copyCurrentImageToClipboard() const {

@@ -36,6 +36,9 @@ private:
 
     void showNextImage();
     void showPreviousImage();
+    void showFirstImage();
+    void showLastImage();
+    void moveCurrentImageToTrash();
     void copyCurrentImageToClipboard() const;
     void showExifDialog();
     void updateOverlay();
