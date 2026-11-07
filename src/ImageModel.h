@@ -26,9 +26,8 @@ public:
     [[nodiscard]] const ImageEntry* at(int index) const;
     ImageEntry* currentMutable();
 
-    [[nodiscard]] int wrappedNextIndex() const;
-    [[nodiscard]] int wrappedPreviousIndex() const;
-
+    // Index of the entry for `filePath`, or -1 if it is not listed.
+    [[nodiscard]] int indexOf(const std::filesystem::path& filePath) const;
     bool setCurrentByPath(const std::filesystem::path& filePath);
     void setCurrentIndex(int index);
     bool removeCurrent();

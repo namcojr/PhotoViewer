@@ -21,6 +21,15 @@ void ImageViewerWidget::setImage(const QImage& image) {
     update();
 }
 
+void ImageViewerWidget::setFrame(const QImage& frame) {
+    if (frame.size() != image_.size()) {
+        setImage(frame);
+        return;
+    }
+    image_ = frame;
+    update();
+}
+
 void ImageViewerWidget::rotateClockwise() {
     rotateBy(1);
 }
@@ -44,6 +53,35 @@ void ImageViewerWidget::rotateBy(const int quarterTurns) {
         }
     }
     update();
+}
+
+void ImageViewerWidget::zoomIn() {
+    if (hasImage()) {
+        applyZoomAt(QPointF(width() / 2.0, height() / 2.0), kWheelZoomStep);
+    }
+}
+
+void ImageViewerWidget::zoomOut() {
+    if (hasImage()) {
+        applyZoomAt(QPointF(width() / 2.0, height() / 2.0), 1.0 / kWheelZoomStep);
+    }
+}
+
+void ImageViewerWidget::zoomToFit() {
+    if (hasImage()) {
+        fitToWindow();
+        update();
+    }
+}
+
+void ImageViewerWidget::zoomToActualSize() {
+    if (hasImage()) {
+        applyZoomAt(QPointF(width() / 2.0, height() / 2.0), actualSizeScale() / scale_);
+    }
+}
+
+qreal ImageViewerWidget::actualSizeScale() const {
+    return 1.0 / devicePixelRatioF();
 }
 
 bool ImageViewerWidget::hasImage() const {
@@ -144,6 +182,22 @@ void ImageViewerWidget::mouseReleaseEvent(QMouseEvent* event) {
     }
 
     QWidget::mouseReleaseEvent(event);
+}
+
+void ImageViewerWidget::mouseDoubleClickEvent(QMouseEvent* event) {
+    if (event->button() != Qt::LeftButton || !hasImage()) {
+        QWidget::mouseDoubleClickEvent(event);
+        return;
+    }
+
+    // Toggle between "fit to window" and 100 % centred on the clicked point.
+    if (fitMode_) {
+        applyZoomAt(event->position(), actualSizeScale() / scale_);
+    } else {
+        fitToWindow();
+        update();
+    }
+    event->accept();
 }
 
 QSizeF ImageViewerWidget::scaledImageSize() const {

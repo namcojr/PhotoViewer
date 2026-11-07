@@ -1,10 +1,12 @@
 #pragma once
 
 #include <filesystem>
+#include <vector>
 
 #include <QFutureWatcher>
 #include <QImage>
 #include <QMainWindow>
+#include <QMovie>
 #include <QSettings>
 #include <QTimer>
 
@@ -23,6 +25,9 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(const std::filesystem::path& startFile, QWidget* parent = nullptr);
 
+protected:
+    void closeEvent(QCloseEvent* event) override;
+
 private:
     struct LoadedImage {
         QImage image;
@@ -30,24 +35,39 @@ private:
         QSize dimensions;
         QString error;
         Metadata::Fields exif;
+        bool animated = false;
+    };
+
+    // A file moved to the trash by Del, kept so Ctrl+Z can put it back.
+    struct TrashedFile {
+        QString originalPath;
+        QString trashPath;
     };
 
     static LoadedImage loadImageFromDisk(const std::filesystem::path& path);
 
     void setupActions();
-    void addShortcut(const QKeySequence& key, void (MainWindow::*slot)());
+    template <typename Slot>
+    void addShortcut(const QKeySequence& key, Slot slot);
 
-    void loadCurrentImageWithFallback(int preferredIndex, int directionIfFail);
-    void beginLoadIndex(int index, int directionIfFail, int attemptsRemaining);
-    void reloadCurrentImage();
+    // Asks for the image at `index`. Only the most recent request is shown: requests made
+    // while a load is running replace each other and start once that load finishes.
+    // `direction` (+1 / -1) is where to look next if the image cannot be decoded.
+    void requestImage(int index, int direction);
+    void startPendingLoad();
+    void onImageLoaded();
+    void showLoadedImage(const LoadedImage& loaded);
+    // The image the user is heading to: the newest request, else the one shown.
+    [[nodiscard]] int targetIndex() const;
 
     void showNextImage();
     void showPreviousImage();
     void showFirstImage();
     void showLastImage();
-    void rotateClockwise();
-    void rotateCounterClockwise();
+    void toggleFullScreen();
+    void escape();
     void moveCurrentImageToTrash();
+    void undoMoveToTrash();
     void copyCurrentImageToClipboard();
     void saveCurrentImageAs();
     void toggleInfoPanel();
@@ -70,11 +90,16 @@ private:
 
     QSettings settings_;
     QTimer hintTimer_;
+    QMovie movie_;
 
-    QImage currentImage_;
     Metadata::Fields currentExif_;
+    std::vector<TrashedFile> trashed_;
+
     QFutureWatcher<LoadedImage> loadWatcher_;
     bool loading_ = false;
-    int loadDirectionIfFail_ = 1;
+    int loadingIndex_ = -1;
+    int loadingDirection_ = 1;
+    int pendingIndex_ = -1;
+    int pendingDirection_ = 1;
     int loadAttemptsRemaining_ = 0;
 };

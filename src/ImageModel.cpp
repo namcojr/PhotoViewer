@@ -168,30 +168,24 @@ ImageModel::ImageEntry* ImageModel::currentMutable() {
     return &entries_[static_cast<std::size_t>(currentIndex_)];
 }
 
-int ImageModel::wrappedNextIndex() const {
-    if (empty()) {
-        return -1;
-    }
-    return (currentIndex_ + 1) % size();
-}
-
-int ImageModel::wrappedPreviousIndex() const {
-    if (empty()) {
-        return -1;
-    }
-    return (currentIndex_ - 1 + size()) % size();
-}
-
-bool ImageModel::setCurrentByPath(const std::filesystem::path& filePath) {
+int ImageModel::indexOf(const std::filesystem::path& filePath) const {
     const auto targetPath = normalized(filePath);
 
     for (std::size_t i = 0; i < entries_.size(); ++i) {
         if (normalized(entries_[i].path) == targetPath) {
-            currentIndex_ = static_cast<int>(i);
-            return true;
+            return static_cast<int>(i);
         }
     }
-    return false;
+    return -1;
+}
+
+bool ImageModel::setCurrentByPath(const std::filesystem::path& filePath) {
+    const int index = indexOf(filePath);
+    if (index < 0) {
+        return false;
+    }
+    currentIndex_ = index;
+    return true;
 }
 
 void ImageModel::setCurrentIndex(const int index) {

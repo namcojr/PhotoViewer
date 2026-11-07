@@ -82,4 +82,57 @@ Fields readExif(const std::filesystem::path& path) {
     return fields;
 }
 
+
+QByteArray withMetadataFrom(const std::filesystem::path& source, const QByteArray& encoded, const QSize pixelSize) {
+    try {
+        auto sourceImage = Exiv2::ImageFactory::open(source.string());
+        if (!sourceImage) {
+            return encoded;
+        }
+        sourceImage->readMetadata();
+        Exiv2::ExifData exif = sourceImage->exifData();
+        Exiv2::XmpData xmp = sourceImage->xmpData();
+        const Exiv2::IptcData& iptc = sourceImage->iptcData();
+        if (exif.empty() && xmp.empty() && iptc.empty()) {
+            return encoded;
+        }
+
+        if (!exif.empty()) {
+            exif["Exif.Image.Orientation"] = static_cast<uint16_t>(1);
+            Exiv2::ExifThumb(exif).erase();
+            for (const auto& [key, value] : {std::pair{"Exif.Photo.PixelXDimension", pixelSize.width()},
+                                             std::pair{"Exif.Photo.PixelYDimension", pixelSize.height()}}) {
+                if (exif.findKey(Exiv2::ExifKey(key)) != exif.end()) {
+                    exif[key] = static_cast<uint32_t>(value);
+                }
+            }
+        }
+        if (xmp.findKey(Exiv2::XmpKey("Xmp.tiff.Orientation")) != xmp.end()) {
+            xmp["Xmp.tiff.Orientation"] = "1";
+        }
+
+        auto target = Exiv2::ImageFactory::open(reinterpret_cast<const Exiv2::byte*>(encoded.constData()),
+                                                static_cast<size_t>(encoded.size()));
+        if (!target) {
+            return encoded;
+        }
+        // Keep what the encoder wrote (e.g. the ICC colour profile) when rewriting the file.
+        target->readMetadata();
+        target->setExifData(exif);
+        target->setXmpData(xmp);
+        target->setIptcData(iptc);
+        target->writeMetadata();
+
+        Exiv2::BasicIo& io = target->io();
+        io.open();
+        const QByteArray result(reinterpret_cast<const char*>(io.mmap()), static_cast<qsizetype>(io.size()));
+        io.munmap();
+        io.close();
+        return result.isEmpty() ? encoded : result;
+    } catch (...) {
+        // Format without metadata support or unreadable source: save the pixels only.
+        return encoded;
+    }
+}
+
 }

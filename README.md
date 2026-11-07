@@ -83,18 +83,31 @@ All images in the same folder are listed in natural order (`IMG_2` before `IMG_1
 
 A hint bar at the bottom of the window shows the main keys.
 
-- `Arrow Right`: next image (wraps)
-- `Arrow Left`: previous image (wraps)
-- `Home`: first image in current list
-- `End`: last image in current list
-- `Page Down`: rotate right (90°)
-- `Page Up`: rotate left (90°)
+- `Arrow Right` / `Arrow Left`: next / previous image (wraps; holding the key skips ahead)
+- `Home` / `End`: first / last image in the folder
+- `Page Down` / `Page Up`: rotate right / left (90°)
+- `+` / `-`: zoom in / out
+- `0`: fit to window
+- `1`: actual size (100 %)
+- `F` / `F11`: toggle fullscreen
 - `I`: show / hide the info panel
 - `S`: save as JPEG, PNG or BMP (includes the current rotation)
 - `Ctrl+C`: copy current full-resolution image (with rotation) to clipboard
 - `Del`: move current image to trash (no confirmation)
-- `q` / `Esc`: quit
+- `Ctrl+Z`: restore the last image moved to trash (repeat to restore earlier ones)
+- `Esc`: leave fullscreen, or quit
+- `q`: quit
 - Mouse wheel: zoom at cursor; drag to pan when zoomed in
+- Double-click: switch between fit to window and actual size at the clicked point
+
+Animated GIF and WebP files play automatically.
+
+## Saving
+
+`S` saves a copy of the image as shown, including the rotation. JPEG and PNG copies
+keep the original's EXIF, IPTC and XMP metadata (camera, date taken, GPS, …), with the
+orientation reset because the pixels are already upright. BMP cannot store metadata.
+Files are written atomically, so overwriting the original is safe even if saving fails.
 
 ## Info panel
 
@@ -103,8 +116,8 @@ Press `I` to toggle a vertical panel next to the image with file details
 and EXIF data (camera, lens, ISO, aperture, shutter, focal length, date taken, GPS, …).
 
 The **Panel position** buttons at the bottom of the panel place it left or right
-of the image. The side, the panel's visibility, and the last format used for
-saving are remembered in `~/.config/photo-viewer/photo-viewer.conf`.
+of the image. The side, the panel's visibility, the window size and the last format
+used for saving are remembered in `~/.config/photo-viewer/photo-viewer.conf`.
 
 ## File manager integration
 
@@ -135,13 +148,3 @@ for mime in image/jpeg image/png image/webp image/bmp image/tiff image/gif \
     xdg-mime default photo-viewer.desktop "$mime"
 done
 ```
-
-UPDATE PLAN
-===========
-
-- [x] Make sure it is compatible with KDE PLASMA6
-- [x] Update it so it reads every known filetype (webp, heic, etc included)
-- [x] Swap PGUP+PGDOWN with cursor keys LEFT and RIGHT, so cursors now move, PGUPDOWN rotate.
-- [x] Allow saving as JPEG, BMP, PNG with "S".
-- [x] Add a small hint at the bottom with the keys: movement, info, quit, etc.
-- [x] Allow the option to toggle the info screen ON/OFF, replacing the window we currently have. This new info screen should be a vertical bar left or right of the canvas. So pressing i will show it or hide it, an option in the info column allows user to select left or right and persist it in ~/.config.

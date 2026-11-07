@@ -2,7 +2,9 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QBuffer>
 #include <QClipboard>
+#include <QCloseEvent>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
@@ -18,6 +20,7 @@
 #include <QMessageBox>
 #include <QMetaObject>
 #include <QPainter>
+#include <QSaveFile>
 #include <QScreen>
 #include <QVBoxLayout>
 #include <QtConcurrent>
@@ -31,6 +34,7 @@ constexpr int kJpegQuality = 92;
 const QString kSettingsPanelVisible = QStringLiteral("InfoPanel/visible");
 const QString kSettingsPanelSide = QStringLiteral("InfoPanel/side");
 const QString kSettingsSaveFormat = QStringLiteral("Save/format");
+const QString kSettingsWindowGeometry = QStringLiteral("Window/geometry");
 
 struct SaveFormat {
     const char* writerFormat;
@@ -75,6 +79,8 @@ QString hintText() {
         {"← →", "Browse"},
         {"Home / End", "First / Last"},
         {"PgUp / PgDn", "Rotate"},
+        {"+ / − / 0", "Zoom"},
+        {"F", "Fullscreen"},
         {"I", "Info"},
         {"S", "Save as"},
         {"Ctrl+C", "Copy"},
@@ -157,53 +163,19 @@ MainWindow::MainWindow(const std::filesystem::path& startFile, QWidget* parent)
     setCentralWidget(central);
     setWindowTitle(QStringLiteral("Photo Viewer"));
     setMinimumSize(480, 320);
-    if (const QScreen* screen = QGuiApplication::primaryScreen()) {
-        resize(screen->availableGeometry().size() * 0.8);
-    } else {
-        resize(1280, 800);
+    if (!restoreGeometry(settings_.value(kSettingsWindowGeometry).toByteArray())) {
+        if (const QScreen* screen = QGuiApplication::primaryScreen()) {
+            resize(screen->availableGeometry().size() * 0.8);
+        } else {
+            resize(1280, 800);
+        }
     }
 
     setupActions();
     viewer_->setFocus();
 
-    connect(&loadWatcher_, &QFutureWatcher<LoadedImage>::finished, this, [this]() {
-        loading_ = false;
-        const LoadedImage loaded = loadWatcher_.result();
-
-        if (loaded.image.isNull()) {
-            --loadAttemptsRemaining_;
-            if (loadAttemptsRemaining_ <= 0) {
-                QMessageBox::critical(this, QStringLiteral("Photo Viewer"),
-                                      QStringLiteral("Failed to load any image in this folder."));
-                qApp->exit(1);
-                return;
-            }
-
-            int nextIndex = model_.currentIndex();
-            if (loadDirectionIfFail_ >= 0) {
-                nextIndex = model_.wrappedNextIndex();
-            } else {
-                nextIndex = model_.wrappedPreviousIndex();
-            }
-            beginLoadIndex(nextIndex, loadDirectionIfFail_, loadAttemptsRemaining_);
-            return;
-        }
-
-        currentImage_ = loaded.image;
-        currentExif_ = loaded.exif;
-        viewer_->setImage(currentImage_);
-
-        auto* currentEntry = model_.currentMutable();
-        if (currentEntry != nullptr) {
-            currentEntry->format = loaded.format;
-            currentEntry->dimensions = loaded.dimensions;
-            setWindowTitle(QStringLiteral("%1 — Photo Viewer")
-                               .arg(QString::fromStdString(currentEntry->path.filename().string())));
-        }
-
-        updateOverlay();
-        updateInfoPanel();
-    });
+    connect(&loadWatcher_, &QFutureWatcher<LoadedImage>::finished, this, &MainWindow::onImageLoaded);
+    connect(&movie_, &QMovie::frameChanged, this, [this]() { viewer_->setFrame(movie_.currentImage()); });
 
     if (!model_.loadFromFile(startFile) || model_.empty()) {
         QMetaObject::invokeMethod(this, [this]() {
@@ -214,7 +186,15 @@ MainWindow::MainWindow(const std::filesystem::path& startFile, QWidget* parent)
         return;
     }
 
-    loadCurrentImageWithFallback(model_.currentIndex(), 1);
+    requestImage(model_.currentIndex(), 1);
+}
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+    // Keep the last windowed size rather than remembering fullscreen.
+    if (!isFullScreen()) {
+        settings_.setValue(kSettingsWindowGeometry, saveGeometry());
+    }
+    QMainWindow::closeEvent(event);
 }
 
 void MainWindow::setupActions() {
@@ -222,23 +202,26 @@ void MainWindow::setupActions() {
     addShortcut(QKeySequence(Qt::Key_Left), &MainWindow::showPreviousImage);
     addShortcut(QKeySequence(Qt::Key_Home), &MainWindow::showFirstImage);
     addShortcut(QKeySequence(Qt::Key_End), &MainWindow::showLastImage);
-    addShortcut(QKeySequence(Qt::Key_PageDown), &MainWindow::rotateClockwise);
-    addShortcut(QKeySequence(Qt::Key_PageUp), &MainWindow::rotateCounterClockwise);
+    addShortcut(QKeySequence(Qt::Key_PageDown), [this] { viewer_->rotateClockwise(); });
+    addShortcut(QKeySequence(Qt::Key_PageUp), [this] { viewer_->rotateCounterClockwise(); });
+    addShortcut(QKeySequence(Qt::Key_Plus), [this] { viewer_->zoomIn(); });
+    addShortcut(QKeySequence(Qt::Key_Equal), [this] { viewer_->zoomIn(); });
+    addShortcut(QKeySequence(Qt::Key_Minus), [this] { viewer_->zoomOut(); });
+    addShortcut(QKeySequence(Qt::Key_0), [this] { viewer_->zoomToFit(); });
+    addShortcut(QKeySequence(Qt::Key_1), [this] { viewer_->zoomToActualSize(); });
+    addShortcut(QKeySequence(Qt::Key_F), &MainWindow::toggleFullScreen);
+    addShortcut(QKeySequence(Qt::Key_F11), &MainWindow::toggleFullScreen);
     addShortcut(QKeySequence(Qt::Key_Delete), &MainWindow::moveCurrentImageToTrash);
+    addShortcut(QKeySequence::Undo, &MainWindow::undoMoveToTrash);
     addShortcut(QKeySequence(Qt::Key_I), &MainWindow::toggleInfoPanel);
     addShortcut(QKeySequence(Qt::Key_S), &MainWindow::saveCurrentImageAs);
     addShortcut(QKeySequence::Copy, &MainWindow::copyCurrentImageToClipboard);
-
-    auto quit = [this]() { close(); };
-    for (const auto key : {Qt::Key_Q, Qt::Key_Escape}) {
-        auto* action = new QAction(this);
-        action->setShortcut(QKeySequence(key));
-        connect(action, &QAction::triggered, this, quit);
-        addAction(action);
-    }
+    addShortcut(QKeySequence(Qt::Key_Q), [this] { close(); });
+    addShortcut(QKeySequence(Qt::Key_Escape), &MainWindow::escape);
 }
 
-void MainWindow::addShortcut(const QKeySequence& key, void (MainWindow::*slot)()) {
+template <typename Slot>
+void MainWindow::addShortcut(const QKeySequence& key, Slot slot) {
     auto* action = new QAction(this);
     action->setShortcut(key);
     action->setShortcutContext(Qt::WindowShortcut);
@@ -268,111 +251,186 @@ MainWindow::LoadedImage MainWindow::loadImageFromDisk(const std::filesystem::pat
 
     // Size after EXIF orientation has been applied.
     result.dimensions = result.image.size();
+    result.animated = reader.supportsAnimation() && reader.imageCount() > 1;
     result.exif = Metadata::readExif(path);
     return result;
 }
 
-void MainWindow::loadCurrentImageWithFallback(const int preferredIndex, const int directionIfFail) {
-    if (model_.empty()) {
-        qApp->exit(1);
+void MainWindow::requestImage(const int index, const int direction) {
+    if (index < 0 || index >= model_.size()) {
         return;
     }
 
-    model_.setCurrentIndex(preferredIndex);
-    loadDirectionIfFail_ = directionIfFail;
+    pendingIndex_ = index;
+    pendingDirection_ = direction;
     loadAttemptsRemaining_ = model_.size();
-    beginLoadIndex(model_.currentIndex(), directionIfFail, model_.size());
+    if (!loading_) {
+        startPendingLoad();
+    }
 }
 
-void MainWindow::beginLoadIndex(const int index, const int directionIfFail, const int attemptsRemaining) {
-    if (loading_ || attemptsRemaining <= 0 || model_.empty()) {
-        return;
-    }
-
-    model_.setCurrentIndex(index);
-    const auto* entry = model_.current();
+void MainWindow::startPendingLoad() {
+    const auto* entry = model_.at(pendingIndex_);
     if (entry == nullptr) {
-        qApp->exit(1);
+        pendingIndex_ = -1;
         return;
     }
 
     loading_ = true;
-    const auto path = entry->path;
-    QFuture<LoadedImage> future = QtConcurrent::run([path]() {
-        return MainWindow::loadImageFromDisk(path);
-    });
+    loadingIndex_ = pendingIndex_;
+    loadingDirection_ = pendingDirection_;
+    pendingIndex_ = -1;
 
-    loadWatcher_.setFuture(future);
+    const auto path = entry->path;
+    loadWatcher_.setFuture(QtConcurrent::run([path]() {
+        return MainWindow::loadImageFromDisk(path);
+    }));
 }
 
-void MainWindow::reloadCurrentImage() {
-    if (!model_.empty()) {
-        loadCurrentImageWithFallback(model_.currentIndex(), 1);
+void MainWindow::onImageLoaded() {
+    loading_ = false;
+
+    if (pendingIndex_ >= 0) {
+        // The user has already moved on: drop this image and load the newest request.
+        startPendingLoad();
+        return;
     }
+
+    const LoadedImage loaded = loadWatcher_.result();
+    if (loaded.image.isNull()) {
+        if (--loadAttemptsRemaining_ <= 0) {
+            QMessageBox::critical(this, QStringLiteral("Photo Viewer"),
+                                  QStringLiteral("Failed to load any image in this folder."));
+            qApp->exit(1);
+            return;
+        }
+
+        // Unreadable file: keep going in the same direction.
+        const int count = model_.size();
+        pendingIndex_ = ((loadingIndex_ + loadingDirection_) % count + count) % count;
+        pendingDirection_ = loadingDirection_;
+        startPendingLoad();
+        return;
+    }
+
+    model_.setCurrentIndex(loadingIndex_);
+    showLoadedImage(loaded);
+}
+
+void MainWindow::showLoadedImage(const LoadedImage& loaded) {
+    movie_.stop();
+    currentExif_ = loaded.exif;
+    viewer_->setImage(loaded.image);
+
+    if (auto* entry = model_.currentMutable()) {
+        entry->format = loaded.format;
+        entry->dimensions = loaded.dimensions;
+        const QString path = QString::fromStdString(entry->path.string());
+        setWindowTitle(QStringLiteral("%1 — Photo Viewer").arg(QFileInfo(path).fileName()));
+
+        if (loaded.animated) {
+            movie_.setFileName(path);
+            movie_.setFormat(loaded.format);
+            movie_.start();
+        }
+    }
+
+    updateOverlay();
+    updateInfoPanel();
+}
+
+int MainWindow::targetIndex() const {
+    if (pendingIndex_ >= 0) {
+        return pendingIndex_;
+    }
+    return loading_ ? loadingIndex_ : model_.currentIndex();
 }
 
 void MainWindow::showNextImage() {
-    if (model_.empty()) {
-        return;
+    if (!model_.empty()) {
+        requestImage((targetIndex() + 1) % model_.size(), 1);
     }
-    loadCurrentImageWithFallback(model_.wrappedNextIndex(), 1);
 }
 
 void MainWindow::showPreviousImage() {
-    if (model_.empty()) {
-        return;
+    if (!model_.empty()) {
+        requestImage((targetIndex() - 1 + model_.size()) % model_.size(), -1);
     }
-    loadCurrentImageWithFallback(model_.wrappedPreviousIndex(), -1);
 }
 
 void MainWindow::showFirstImage() {
-    if (model_.empty()) {
-        return;
-    }
-    loadCurrentImageWithFallback(0, 1);
+    requestImage(0, 1);
 }
 
 void MainWindow::showLastImage() {
-    if (model_.empty()) {
-        return;
+    requestImage(model_.size() - 1, -1);
+}
+
+void MainWindow::toggleFullScreen() {
+    // XOR keeps the maximized flag, so leaving fullscreen returns to a maximized window.
+    setWindowState(windowState() ^ Qt::WindowFullScreen);
+}
+
+void MainWindow::escape() {
+    if (isFullScreen()) {
+        toggleFullScreen();
+    } else {
+        close();
     }
-    loadCurrentImageWithFallback(model_.size() - 1, -1);
-}
-
-void MainWindow::rotateClockwise() {
-    viewer_->rotateClockwise();
-}
-
-void MainWindow::rotateCounterClockwise() {
-    viewer_->rotateCounterClockwise();
 }
 
 void MainWindow::moveCurrentImageToTrash() {
-    if (loading_ || model_.empty()) {
-        return;
-    }
-
     const auto* entry = model_.current();
-    if (entry == nullptr) {
+    if (loading_ || entry == nullptr) {
         return;
     }
 
-    if (!QFile::moveToTrash(QString::fromStdString(entry->path.string()))) {
-        showTransientHint(QStringLiteral("Could not move %1 to trash")
-                              .arg(QString::fromStdString(entry->path.filename().string()).toHtmlEscaped()));
+    const QString path = QString::fromStdString(entry->path.string());
+    const QString name = QFileInfo(path).fileName().toHtmlEscaped();
+    QString trashPath;
+    if (!QFile::moveToTrash(path, &trashPath)) {
+        showTransientHint(QStringLiteral("Could not move %1 to trash").arg(name));
         return;
     }
+    trashed_.push_back({path, trashPath});
 
-    if (!model_.removeCurrent()) {
-        return;
-    }
-
+    model_.removeCurrent();
     if (model_.empty()) {
         close();
         return;
     }
 
-    loadCurrentImageWithFallback(model_.currentIndex(), 1);
+    requestImage(model_.currentIndex(), 1);
+    showTransientHint(QStringLiteral("Moved %1 to trash — Ctrl+Z to undo").arg(name));
+}
+
+void MainWindow::undoMoveToTrash() {
+    if (loading_ || trashed_.empty()) {
+        return;
+    }
+
+    const TrashedFile file = trashed_.back();
+    trashed_.pop_back();
+
+    const QFileInfo original(file.originalPath);
+    const QString name = original.fileName().toHtmlEscaped();
+    if (original.exists() || !QFile::rename(file.trashPath, file.originalPath)) {
+        showTransientHint(QStringLiteral("Could not restore %1").arg(name));
+        return;
+    }
+
+    // Remove the trash's record of the file: <trash>/info/<name>.trashinfo (freedesktop spec).
+    const QFileInfo inTrash(file.trashPath);
+    QDir trashDir = inTrash.dir();
+    if (trashDir.cdUp()) {
+        QFile::remove(trashDir.filePath(QStringLiteral("info/%1.trashinfo").arg(inTrash.fileName())));
+    }
+
+    const auto restored = std::filesystem::path(file.originalPath.toStdString());
+    if (model_.insertFile(restored)) {
+        requestImage(model_.indexOf(restored), 1);
+    }
+    showTransientHint(QStringLiteral("Restored %1").arg(name));
 }
 
 void MainWindow::copyCurrentImageToClipboard() {
@@ -447,7 +505,10 @@ void MainWindow::saveCurrentImageAs() {
         image = flattened;
     }
 
-    QImageWriter writer(targetPath, format->writerFormat);
+    QByteArray encoded;
+    QBuffer buffer(&encoded);
+    buffer.open(QIODevice::WriteOnly);
+    QImageWriter writer(&buffer, format->writerFormat);
     if (isJpeg) {
         writer.setQuality(kJpegQuality);
         writer.setOptimizedWrite(true);
@@ -458,12 +519,24 @@ void MainWindow::saveCurrentImageAs() {
         return;
     }
 
+    // Read from the source before touching the target, which may be the same file.
+    encoded = Metadata::withMetadataFrom(entry->path, encoded, image.size());
+
+    // QSaveFile writes to a temporary file and renames it, so a failed save never
+    // leaves a half-written image behind (important when overwriting the original).
+    QSaveFile file(targetPath);
+    if (!file.open(QIODevice::WriteOnly) || file.write(encoded) != encoded.size() || !file.commit()) {
+        QMessageBox::warning(this, QStringLiteral("Save Image As"),
+                             QStringLiteral("Could not save \"%1\":\n%2").arg(targetPath, file.errorString()));
+        return;
+    }
+
     settings_.setValue(kSettingsSaveFormat, QString::fromLatin1(format->suffix));
 
     const auto savedPath = std::filesystem::path(targetPath.toStdString());
     std::error_code ec;
     if (std::filesystem::equivalent(savedPath, entry->path, ec)) {
-        reloadCurrentImage();
+        requestImage(model_.currentIndex(), 1);
     } else if (model_.insertFile(savedPath)) {
         updateOverlay();
         updateInfoPanel();

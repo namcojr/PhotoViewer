@@ -12,8 +12,14 @@ public:
     explicit ImageViewerWidget(QWidget* parent = nullptr);
 
     void setImage(const QImage& image);
+    // Replaces the pixels (e.g. the next animation frame) and keeps zoom, pan and rotation.
+    void setFrame(const QImage& frame);
     void rotateClockwise();
     void rotateCounterClockwise();
+    void zoomIn();
+    void zoomOut();
+    void zoomToFit();
+    void zoomToActualSize();
     [[nodiscard]] bool hasImage() const;
 
     // The current image with the on-screen rotation applied.
@@ -26,6 +32,7 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
 
 private:
     [[nodiscard]] bool isQuarterTurnOdd() const;
@@ -35,6 +42,8 @@ private:
     void fitToWindow();
     void clampOffset();
     void applyZoomAt(const QPointF& cursorPos, qreal zoomFactor);
+    // Scale at which one image pixel covers one physical screen pixel.
+    [[nodiscard]] qreal actualSizeScale() const;
 
     QImage image_;
     qreal scale_ = 1.0;
