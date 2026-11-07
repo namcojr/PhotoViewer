@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(photo_viewer VERSION 0.1.0 LANGUAGES CXX)
+project(photo_viewer VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -32,16 +32,18 @@ add_executable(photo-viewer
     src/MainWindow.cpp
     src/ImageModel.cpp
     src/ImageViewerWidget.cpp
-    src/ExifDialog.cpp
+    src/InfoPanel.cpp
+    src/Metadata.cpp
 )
 
 target_include_directories(photo-viewer PRIVATE src)
+target_compile_definitions(photo-viewer PRIVATE PHOTO_VIEWER_VERSION="${PROJECT_VERSION}")
 
 target_link_libraries(photo-viewer
     PRIVATE
         Qt6::Widgets
         Qt6::Concurrent
-    ${EXIV2_TARGET}
+        ${EXIV2_TARGET}
 )
 
 install(TARGETS photo-viewer

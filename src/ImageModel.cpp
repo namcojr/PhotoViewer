@@ -1,16 +1,43 @@
 #include "ImageModel.h"
 
 #include <algorithm>
-#include <cctype>
 
+#include <QCollator>
+#include <QFileInfo>
 #include <QImageReader>
+#include <QSet>
 
 namespace {
-std::string toLower(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
-    return value;
+std::filesystem::path normalized(const std::filesystem::path& path) {
+    std::error_code ec;
+    auto canonical = std::filesystem::weakly_canonical(path, ec);
+    return ec ? path : canonical;
+}
+
+// File suffixes handled by the image plugins installed for this Qt (qt6-imageformats,
+// kimageformats, qt6-svg, ...). Queried once at runtime, so new plugins work without a rebuild.
+const QSet<QString>& knownSuffixes() {
+    static const QSet<QString> suffixes = [] {
+        QSet<QString> result;
+        for (const QByteArray& format : QImageReader::supportedImageFormats()) {
+            result.insert(QString::fromLatin1(format).toLower());
+        }
+        // Common aliases that some plugins do not list explicitly.
+        if (result.contains(QStringLiteral("jpeg"))) {
+            result.insert(QStringLiteral("jpg"));
+            result.insert(QStringLiteral("jpe"));
+            result.insert(QStringLiteral("jfif"));
+        }
+        if (result.contains(QStringLiteral("tiff"))) {
+            result.insert(QStringLiteral("tif"));
+        }
+        if (result.contains(QStringLiteral("heif"))) {
+            result.insert(QStringLiteral("heic"));
+            result.insert(QStringLiteral("hif"));
+        }
+        return result;
+    }();
+    return suffixes;
 }
 }
 
@@ -19,13 +46,13 @@ bool ImageModel::loadFromFile(const std::filesystem::path& filePath) {
     currentIndex_ = -1;
 
     std::error_code ec;
-    const auto canonicalPath = std::filesystem::weakly_canonical(filePath, ec);
-    const auto targetPath = ec ? filePath : canonicalPath;
+    const auto targetPath = normalized(filePath);
 
     const auto parent = targetPath.parent_path();
     if (parent.empty() || !std::filesystem::exists(parent, ec)) {
         return false;
     }
+    directory_ = parent;
 
     for (const auto& item : std::filesystem::directory_iterator(parent, ec)) {
         if (ec) {
@@ -51,11 +78,64 @@ bool ImageModel::loadFromFile(const std::filesystem::path& filePath) {
         return false;
     }
 
-    std::sort(entries_.begin(), entries_.end(), [](const ImageEntry& lhs, const ImageEntry& rhs) {
-        return toLower(lhs.path.filename().string()) < toLower(rhs.path.filename().string());
+    sortEntries();
+
+    if (setCurrentByPath(targetPath)) {
+        return true;
+    }
+
+    // The requested file was not picked up by the scan (e.g. hidden file or unknown suffix):
+    // probe it directly so explicitly opened files always work.
+    if (auto entry = makeEntry(targetPath)) {
+        entries_.push_back(std::move(*entry));
+        sortEntries();
+        return setCurrentByPath(targetPath);
+    }
+    return false;
+}
+
+void ImageModel::sortEntries() {
+    QCollator collator;
+    collator.setNumericMode(true);
+    collator.setCaseSensitivity(Qt::CaseInsensitive);
+    std::sort(entries_.begin(), entries_.end(), [&collator](const ImageEntry& lhs, const ImageEntry& rhs) {
+        return collator.compare(QString::fromStdString(lhs.path.filename().string()),
+                                QString::fromStdString(rhs.path.filename().string())) < 0;
+    });
+}
+
+bool ImageModel::insertFile(const std::filesystem::path& filePath) {
+    const auto target = normalized(filePath);
+    if (target.parent_path() != directory_) {
+        return false;
+    }
+
+    std::filesystem::path currentPath;
+    if (const auto* entry = current()) {
+        currentPath = entry->path;
+    }
+
+    const bool alreadyListed = std::any_of(entries_.begin(), entries_.end(), [&target](const ImageEntry& entry) {
+        return normalized(entry.path) == target;
     });
 
-    return setCurrentByPath(targetPath);
+    if (!alreadyListed) {
+        auto entry = makeEntry(target);
+        if (!entry) {
+            return false;
+        }
+        entries_.push_back(std::move(*entry));
+        sortEntries();
+    }
+
+    if (!currentPath.empty()) {
+        setCurrentByPath(currentPath);
+    }
+    return true;
+}
+
+const std::filesystem::path& ImageModel::directory() const {
+    return directory_;
 }
 
 bool ImageModel::empty() const {
@@ -103,16 +183,10 @@ int ImageModel::wrappedPreviousIndex() const {
 }
 
 bool ImageModel::setCurrentByPath(const std::filesystem::path& filePath) {
-    std::error_code ec;
-    const auto canonicalPath = std::filesystem::weakly_canonical(filePath, ec);
-    const auto targetPath = ec ? filePath : canonicalPath;
+    const auto targetPath = normalized(filePath);
 
     for (std::size_t i = 0; i < entries_.size(); ++i) {
-        std::error_code entryEc;
-        const auto canonicalEntry = std::filesystem::weakly_canonical(entries_[i].path, entryEc);
-        const auto entryPath = entryEc ? entries_[i].path : canonicalEntry;
-
-        if (entryPath == targetPath) {
+        if (normalized(entries_[i].path) == targetPath) {
             currentIndex_ = static_cast<int>(i);
             return true;
         }
@@ -147,23 +221,27 @@ bool ImageModel::removeCurrent() {
 }
 
 std::optional<ImageModel::ImageEntry> ImageModel::makeEntry(const std::filesystem::path& path) {
-    QImageReader reader(QString::fromStdString(path.string()));
-    reader.setDecideFormatFromContent(true);
-    if (!reader.canRead()) {
-        return std::nullopt;
-    }
+    const QString filePath = QString::fromStdString(path.string());
+    const QString suffix = QFileInfo(filePath).suffix().toLower();
 
     ImageEntry entry;
     entry.path = path;
+
+    if (!knownSuffixes().contains(suffix)) {
+        // Unknown or missing extension: sniff the content. Formats are filled in on load
+        // for files with a known suffix, which keeps scanning large folders fast.
+        QImageReader reader(filePath);
+        if (!reader.canRead()) {
+            return std::nullopt;
+        }
+        entry.format = reader.format();
+    }
 
     std::error_code ec;
     entry.fileSizeBytes = std::filesystem::file_size(path, ec);
     if (ec) {
         entry.fileSizeBytes = 0;
     }
-
-    entry.format = reader.format();
-    entry.dimensions = reader.size();
 
     return entry;
 }

@@ -16,6 +16,9 @@ public:
     void rotateCounterClockwise();
     [[nodiscard]] bool hasImage() const;
 
+    // The current image with the on-screen rotation applied.
+    [[nodiscard]] QImage transformedImage() const;
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
@@ -28,6 +31,7 @@ private:
     [[nodiscard]] bool isQuarterTurnOdd() const;
     [[nodiscard]] QSizeF scaledImageSize() const;
     [[nodiscard]] bool isPannable() const;
+    void rotateBy(int quarterTurns);
     void fitToWindow();
     void clampOffset();
     void applyZoomAt(const QPointF& cursorPos, qreal zoomFactor);
@@ -36,6 +40,7 @@ private:
     qreal scale_ = 1.0;
     QPointF offset_;
     int quarterTurns_ = 0;
+    bool fitMode_ = true;
     bool dragging_ = false;
     QPoint lastMousePos_;
 

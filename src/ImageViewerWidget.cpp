@@ -4,6 +4,7 @@
 
 #include <QMouseEvent>
 #include <QPainter>
+#include <QTransform>
 #include <QWheelEvent>
 
 ImageViewerWidget::ImageViewerWidget(QWidget* parent)
@@ -21,33 +22,39 @@ void ImageViewerWidget::setImage(const QImage& image) {
 }
 
 void ImageViewerWidget::rotateClockwise() {
-    if (image_.isNull()) {
-        return;
-    }
-
-    quarterTurns_ = (quarterTurns_ + 1) % 4;
-    clampOffset();
-    if (!isPannable()) {
-        offset_ = QPointF(0.0, 0.0);
-    }
-    update();
+    rotateBy(1);
 }
 
 void ImageViewerWidget::rotateCounterClockwise() {
+    rotateBy(3);
+}
+
+void ImageViewerWidget::rotateBy(const int quarterTurns) {
     if (image_.isNull()) {
         return;
     }
 
-    quarterTurns_ = (quarterTurns_ + 3) % 4;
-    clampOffset();
-    if (!isPannable()) {
-        offset_ = QPointF(0.0, 0.0);
+    quarterTurns_ = (quarterTurns_ + quarterTurns) % 4;
+    if (fitMode_) {
+        fitToWindow();
+    } else {
+        clampOffset();
+        if (!isPannable()) {
+            offset_ = QPointF(0.0, 0.0);
+        }
     }
     update();
 }
 
 bool ImageViewerWidget::hasImage() const {
     return !image_.isNull();
+}
+
+QImage ImageViewerWidget::transformedImage() const {
+    if (image_.isNull() || quarterTurns_ == 0) {
+        return image_;
+    }
+    return image_.transformed(QTransform().rotate(static_cast<qreal>(quarterTurns_) * 90.0));
 }
 
 void ImageViewerWidget::paintEvent(QPaintEvent*) {
@@ -80,7 +87,7 @@ void ImageViewerWidget::resizeEvent(QResizeEvent*) {
         return;
     }
 
-    if (!isPannable()) {
+    if (fitMode_) {
         fitToWindow();
     }
     clampOffset();
@@ -163,13 +170,17 @@ bool ImageViewerWidget::isPannable() const {
 void ImageViewerWidget::fitToWindow() {
     if (image_.isNull() || width() <= 0 || height() <= 0) {
         scale_ = 1.0;
+        fitMode_ = true;
         return;
     }
 
-    const qreal xRatio = static_cast<qreal>(width()) / static_cast<qreal>(image_.width());
-    const qreal yRatio = static_cast<qreal>(height()) / static_cast<qreal>(image_.height());
+    const qreal imageWidth = isQuarterTurnOdd() ? image_.height() : image_.width();
+    const qreal imageHeight = isQuarterTurnOdd() ? image_.width() : image_.height();
+    const qreal xRatio = static_cast<qreal>(width()) / imageWidth;
+    const qreal yRatio = static_cast<qreal>(height()) / imageHeight;
     scale_ = std::clamp(std::min(xRatio, yRatio), kMinZoom, kMaxZoom);
     offset_ = QPointF(0.0, 0.0);
+    fitMode_ = true;
 }
 
 void ImageViewerWidget::clampOffset() {
@@ -194,6 +205,7 @@ void ImageViewerWidget::applyZoomAt(const QPointF& cursorPos, const qreal zoomFa
     if (qFuzzyCompare(oldScale, scale_)) {
         return;
     }
+    fitMode_ = false;
 
     const QPointF viewportCenter(width() / 2.0, height() / 2.0);
     const QPointF centered = cursorPos - viewportCenter - offset_;
